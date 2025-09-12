@@ -103,7 +103,7 @@ def is_china_policy_related(title, summary):
     policy_keywords = [
         # Trade & Economics
         'trade', 'tariff', 'import', 'export', 'economy', 'economic', 'gdp',
-        'investment', 'market', 'stock', 'yuan', 'renminbi', 'currency',
+        'investment', 'currency',
         'inflation', 'growth', 'manufacturing', 'supply chain',
         
         # Technology & Innovation
