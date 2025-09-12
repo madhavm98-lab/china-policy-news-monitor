@@ -149,8 +149,8 @@ class ChinaPolicyNewsMonitor:
                 else:
                     pub_date = datetime.now()
                 
-                # Only include articles from last 24 hours
-                if pub_date > datetime.now() - timedelta(days=1):
+                # Only include articles from last 48 hours (was 24)
+                if pub_date > datetime.now() - timedelta(days=2):
                     articles.append({
                         'title': title,
                         'link': link,
@@ -340,4 +340,3 @@ class ChinaPolicyNewsMonitor:
 if __name__ == "__main__":
     monitor = ChinaPolicyNewsMonitor()
     monitor.run()
-      
