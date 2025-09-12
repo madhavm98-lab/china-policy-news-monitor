@@ -1,291 +1,198 @@
 #!/usr/bin/env python3
-"""
-DEBUG VERSION - China Policy News Monitor
-This version includes extensive debugging to identify issues
-"""
-
 import feedparser
 import requests
-import smtplib
 import json
-import re
-from datetime import datetime, timedelta
+import os
+import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from typing import List, Dict, Set
-import os
-import hashlib
-import time
+from datetime import datetime, timedelta
+import re
 
-class ChinaPolicyNewsMonitorDebug:
-    def __init__(self):
-        # Email configuration
-        self.smtp_server = "smtp.gmail.com"
-        self.smtp_port = 587
-        self.email_user = os.getenv('EMAIL_USER')
-        self.email_password = os.getenv('EMAIL_PASSWORD')
-        self.recipient_email = os.getenv('RECIPIENT_EMAIL')
-        
-        # Simple, reliable RSS feeds for testing
-        self.rss_feeds = [
-            {
-                'name': 'BBC World',
-                'url': 'http://feeds.bbci.co.uk/news/world/rss.xml',
-                'category': 'test'
-            },
-            {
-                'name': 'Reuters Top News',
-                'url': 'https://feeds.reuters.com/reuters/topNews',
-                'category': 'test'
-            },
-            {
-                'name': 'Google News - China',
-                'url': 'https://news.google.com/rss/search?q=china&hl=en-US&gl=US&ceid=US:en',
-                'category': 'test'
-            },
-            {
-                'name': 'CNN RSS',
-                'url': 'http://rss.cnn.com/rss/edition.rss',
-                'category': 'test'
-            }
-        ]
-        
-        # Very broad keywords for testing
-        self.policy_keywords = [
-            'china', 'chinese', 'beijing', 'government', 'policy', 'economic', 
-            'trade', 'president', 'minister', 'official', 'state', 'national',
-            'xi jinping', 'communist', 'party', 'congress', 'council'
-        ]
-        
-        # File to store processed article IDs
-        self.processed_file = 'processed_articles.json'
-        
-    def load_processed_articles(self) -> Set[str]:
-        """Load list of already processed article IDs"""
-        try:
-            if os.path.exists(self.processed_file):
-                with open(self.processed_file, 'r') as f:
-                    data = json.load(f)
-                    processed_set = set(data.get('processed', []))
-                    print(f"🔍 DEBUG: Loaded {len(processed_set)} processed articles from file")
-                    return processed_set
-            else:
-                print("🔍 DEBUG: No processed articles file found - starting fresh")
-        except Exception as e:
-            print(f"🔍 DEBUG: Error loading processed articles: {e}")
+def load_processed_articles():
+    """Load the list of already processed articles"""
+    try:
+        with open('processed_articles.json', 'r') as f:
+            return set(json.load(f))
+    except FileNotFoundError:
         return set()
+
+def save_processed_articles(processed_articles):
+    """Save the list of processed articles"""
+    try:
+        with open('processed_articles.json', 'w') as f:
+            json.dump(list(processed_articles), f, indent=2)
+    except Exception as e:
+        print(f"Error saving processed articles: {e}")
+
+def fetch_news():
+    """Fetch news from multiple RSS feeds"""
+    feeds = [
+        # Major international news sources
+        ('Reuters World', 'https://feeds.reuters.com/reuters/worldNews'),
+        ('BBC World', 'https://feeds.bbci.co.uk/news/world/rss.xml'),
+        ('CNN World', 'https://rss.cnn.com/rss/edition.rss'),
+        ('AP News', 'https://feeds.apnews.com/apnews/World'),
+        ('Financial Times', 'https://www.ft.com/world?format=rss'),
+        
+        # China-focused sources
+        ('South China Morning Post', 'https://www.scmp.com/rss/91/feed'),
+        ('China Daily', 'https://www.chinadaily.com.cn/rss/world_rss.xml'),
+        ('Xinhua World', 'http://www.xinhuanet.com/english/rss/world.xml'),
+        
+        # Economic/Business sources
+        ('Bloomberg Asia', 'https://feeds.bloomberg.com/markets/news.rss'),
+        ('WSJ World', 'https://feeds.a.dj.com/rss/RSSWorldNews.xml'),
+    ]
     
-    def save_processed_articles(self, processed_ids: Set[str]):
-        """Save processed article IDs to file"""
+    all_articles = []
+    cutoff_date = datetime.now() - timedelta(days=1)  # Only articles from last 24 hours
+    
+    for source_name, feed_url in feeds:
         try:
-            data = {
-                'processed': list(processed_ids),
-                'last_updated': datetime.now().isoformat()
+            print(f"Fetching from {source_name}...")
+            
+            # Add headers to avoid blocking
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
             }
             
-            with open(self.processed_file, 'w') as f:
-                json.dump(data, f, indent=2)
-            print(f"🔍 DEBUG: Saved {len(processed_ids)} processed article IDs")
-        except Exception as e:
-            print(f"🔍 DEBUG: Error saving processed articles: {e}")
-    
-    def generate_article_id(self, title: str, link: str) -> str:
-        """Generate unique ID for an article"""
-        return hashlib.md5(f"{title}{link}".encode()).hexdigest()[:12]
-    
-    def is_policy_related(self, title: str, description: str) -> tuple[bool, List[str]]:
-    """Accept ALL articles for testing"""
-    return True, ["test"]  # Accept everything!
-    
-    def fetch_rss_feed(self, feed_config: Dict) -> List[Dict]:
-        """Fetch and parse RSS feed with extensive debugging"""
-        articles = []
-        
-        try:
-            print(f"\n🌐 DEBUG: Fetching from {feed_config['name']}...")
-            print(f"   URL: {feed_config['url']}")
+            response = requests.get(feed_url, headers=headers, timeout=10)
+            feed = feedparser.parse(response.content)
             
-            # Try to fetch the feed
-            feed = feedparser.parse(feed_config['url'])
-            
-            # Check for feed parsing errors
-            if hasattr(feed, 'bozo') and feed.bozo:
-                print(f"   ⚠️ Feed parsing warning: {feed.bozo_exception}")
-            
-            print(f"   Feed status: {getattr(feed, 'status', 'Unknown')}")
-            print(f"   Feed title: {getattr(feed.feed, 'title', 'No title')}")
-            print(f"   Total entries found: {len(feed.entries)}")
-            
-            if len(feed.entries) == 0:
-                print(f"   ❌ No entries found in feed!")
-                return articles
-            
-            # Process each entry
-            for i, entry in enumerate(feed.entries[:5]):  # Only process first 5 for debugging
-                print(f"\n   📰 Processing entry {i+1}:")
-                
-                # Extract article information
-                title = entry.get('title', 'No title')
-                link = entry.get('link', '')
-                description = entry.get('description', entry.get('summary', ''))
-                published = entry.get('published', '')
-                
-                print(f"      Title: {title}")
-                print(f"      Link: {link[:60]}...")
-                print(f"      Published: {published}")
-                
-                # Parse published date
+            recent_count = 0
+            for entry in feed.entries:
+                # Parse publication date
                 pub_date = None
-                if published:
-                    try:
-                        pub_date = datetime(*entry.published_parsed[:6])
-                        print(f"      Parsed date: {pub_date}")
-                    except Exception as date_error:
-                        print(f"      Date parsing error: {date_error}")
-                        pub_date = datetime.now()
-                else:
-                    pub_date = datetime.now()
-                    print(f"      No published date, using current time")
+                if hasattr(entry, 'published_parsed') and entry.published_parsed:
+                    pub_date = datetime(*entry.published_parsed[:6])
+                elif hasattr(entry, 'updated_parsed') and entry.updated_parsed:
+                    pub_date = datetime(*entry.updated_parsed[:6])
                 
-                # Check if article is recent (last 7 days for debugging)
-                days_old = (datetime.now() - pub_date).days
-                print(f"      Days old: {days_old}")
-                
-                if pub_date > datetime.now() - timedelta(days=7):  # 7 days for debugging
-                    articles.append({
-                        'title': title,
-                        'link': link,
-                        'description': description,
-                        'published': pub_date,
-                        'source': feed_config['name'],
-                        'category': feed_config['category']
-                    })
-                    print(f"      ✅ Added to articles list")
-                else:
-                    print(f"      ❌ Too old, skipping")
+                # Only include recent articles
+                if pub_date and pub_date >= cutoff_date:
+                    recent_count += 1
+                    article = {
+                        'title': entry.get('title', ''),
+                        'link': entry.get('link', ''),
+                        'summary': entry.get('summary', entry.get('description', '')),
+                        'published': pub_date.strftime('%Y-%m-%d %H:%M'),
+                        'source': source_name
+                    }
+                    all_articles.append(article)
             
-            print(f"   📊 Final count: {len(articles)} recent articles from {feed_config['name']}")
+            print(f"Found {recent_count} recent articles from {source_name}")
             
         except Exception as e:
-            print(f"   ❌ Error fetching {feed_config['name']}: {e}")
-            print(f"   Error type: {type(e).__name__}")
-        
-        time.sleep(2)  # Be extra respectful to servers
-        return articles
+            print(f"Error fetching {source_name}: {e}")
     
-    def collect_news(self) -> List[Dict]:
-        """Collect news from all RSS feeds with debugging"""
-        print("🚀 DEBUG: Starting news collection...")
-        all_articles = []
-        processed_ids = self.load_processed_articles()
-        
-        for feed_config in self.rss_feeds:
-            articles = self.fetch_rss_feed(feed_config)
-            
-            print(f"\n🔍 DEBUG: Processing {len(articles)} articles from {feed_config['name']}")
-            
-            for article in articles:
-                # Generate unique ID
-                article_id = self.generate_article_id(article['title'], article['link'])
-                print(f"   Article ID: {article_id}")
-                
-                # Skip if already processed
-                if article_id in processed_ids:
-                    print(f"   ⏭️ Skipping - already processed")
-                    continue
-                
-                # Check if policy-related (with debugging output)
-                is_relevant, keywords = self.is_policy_related(
-                    article['title'], 
-                    article['description']
-                )
-                
-                if is_relevant:
-                    article['id'] = article_id
-                    article['keywords'] = keywords
-                    all_articles.append(article)
-                    processed_ids.add(article_id)
-                    print(f"   ✅ ADDED: Relevant article found!")
-                else:
-                    print(f"   ❌ SKIPPED: Not relevant")
-        
-        # Save updated processed IDs
-        self.save_processed_articles(processed_ids)
-        
-        print(f"\n📊 DEBUG: Final results:")
-        print(f"   Total relevant articles found: {len(all_articles)}")
-        print(f"   Total processed IDs: {len(processed_ids)}")
-        
-        return all_articles
+    return all_articles
+
+def is_china_policy_related(title, summary):
+    """Enhanced function to check if article is China policy-related"""
+    text = f"{title} {summary}".lower()
     
-    def generate_debug_email(self, articles: List[Dict]) -> str:
-        """Generate debug email with detailed information"""
+    # Primary China keywords - must have at least one
+    china_keywords = [
+        'china', 'chinese', 'beijing', 'shanghai', 'guangzhou', 'shenzhen',
+        'xi jinping', 'ccp', 'communist party', 'prc', 'peoples republic',
+        'mainland china', 'sino-'
+    ]
+    
+    # Policy/Economic keywords - must have at least one if China keyword present
+    policy_keywords = [
+        # Trade & Economics
+        'trade', 'tariff', 'import', 'export', 'economy', 'economic', 'gdp',
+        'investment', 'market', 'stock', 'yuan', 'renminbi', 'currency',
+        'inflation', 'growth', 'manufacturing', 'supply chain',
+        
+        # Technology & Innovation
+        'technology', 'tech', 'semiconductor', 'chip', 'ai', 'artificial intelligence',
+        'huawei', 'tencent', 'alibaba', 'baidu', 'bytedance', 'tiktok',
+        'electric vehicle', 'ev', 'battery', 'solar', 'renewable',
+        
+        # Geopolitics & International Relations
+        'policy', 'diplomacy', 'diplomatic', 'foreign policy', 'sanctions',
+        'biden', 'trump', 'us-china', 'america', 'european union', 'nato',
+        'g7', 'g20', 'wto', 'world bank', 'imf',
+        
+        # Regional Issues
+        'taiwan', 'hong kong', 'macau', 'tibet', 'xinjiang', 'uighur', 'uyghur',
+        'south china sea', 'east china sea', 'belt and road', 'bri',
+        
+        # Governance & Society
+        'government', 'regulation', 'law', 'legal', 'court', 'human rights',
+        'democracy', 'protest', 'covid', 'pandemic', 'lockdown', 'zero covid',
+        'environment', 'climate', 'carbon', 'emission', 'pollution'
+    ]
+    
+    # Check if has China keyword
+    has_china = any(keyword in text for keyword in china_keywords)
+    
+    # Check if has policy keyword
+    has_policy = any(keyword in text for keyword in policy_keywords)
+    
+    # Also check for US-China or other country-China relations
+    country_china_patterns = [
+        r'\bus[\s\-]china\b', r'\bchina[\s\-]us\b',
+        r'\beurope[\s\-]china\b', r'\bchina[\s\-]europe\b',
+        r'\bindia[\s\-]china\b', r'\bchina[\s\-]india\b',
+        r'\bjapan[\s\-]china\b', r'\bchina[\s\-]japan\b'
+    ]
+    
+    has_relation = any(re.search(pattern, text) for pattern in country_china_patterns)
+    
+    return has_china and (has_policy or has_relation)
+
+def filter_china_policy_articles(articles):
+    """Filter articles related to China policy with enhanced criteria"""
+    filtered_articles = []
+    
+    print("\n🔍 Analyzing articles for China policy relevance...")
+    for article in articles:
+        if is_china_policy_related(article['title'], article['summary']):
+            filtered_articles.append(article)
+            print(f"✓ MATCH: {article['title'][:80]}...")
+        else:
+            print(f"✗ Skip: {article['title'][:80]}...")
+    
+    return filtered_articles
+
+def send_email(articles):
+    """Send email with the articles"""
+    email_user = os.environ.get('EMAIL_USER')
+    email_password = os.environ.get('EMAIL_PASSWORD')
+    recipient_email = os.environ.get('RECIPIENT_EMAIL')
+    
+    if not all([email_user, email_password, recipient_email]):
+        print("❌ Email credentials not configured")
+        return
+    
+    # Create email content
+    current_date = datetime.now().strftime('%Y-%m-%d')
+    
+    if articles:
+        subject = f"China Policy News Digest - {len(articles)} articles - {current_date}"
+        
+        # HTML email body
         html_content = f"""
         <html>
-        <head>
-            <style>
-                body {{ font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; }}
-                .header {{ background-color: #c41e3a; color: white; padding: 20px; text-align: center; }}
-                .debug {{ background-color: #f0f8ff; padding: 15px; margin: 10px 0; border-left: 4px solid #007acc; }}
-                .article {{ border-bottom: 1px solid #eee; padding: 20px 0; }}
-                .title {{ font-size: 18px; font-weight: bold; color: #333; margin-bottom: 10px; }}
-                .meta {{ color: #666; font-size: 12px; margin-bottom: 10px; }}
-                .keywords {{ background-color: #f0f0f0; padding: 5px; border-radius: 3px; font-size: 11px; }}
-                a {{ color: #c41e3a; text-decoration: none; }}
-            </style>
-        </head>
-        <body>
-            <div class="header">
-                <h1>🔍 DEBUG: China Policy News Monitor</h1>
-                <p>Generated on: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</p>
-                <p>Found {len(articles)} articles</p>
-            </div>
-            
-            <div class="debug">
-                <h3>🔧 Debug Information:</h3>
-                <p><strong>Feed Sources Tested:</strong> BBC, Reuters, Google News, CNN</p>
-                <p><strong>Keywords Used:</strong> Very broad (china, government, policy, etc.)</p>
-                <p><strong>Time Window:</strong> Last 7 days</p>
-                <p><strong>System Status:</strong> {"✅ Working" if len(articles) > 0 else "❌ Issue detected"}</p>
-            </div>
+        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+            <h2 style="color: #d32f2f;">🇨🇳 China Policy News Daily Digest</h2>
+            <p style="color: #666;"><strong>Date:</strong> {current_date}</p>
+            <p style="color: #666;"><strong>Articles Found:</strong> {len(articles)}</p>
+            <hr style="border: 1px solid #ddd;">
         """
         
-        if len(articles) == 0:
-            html_content += """
-            <div class="debug">
-                <h3>❌ No Articles Found - Possible Issues:</h3>
-                <ul>
-                    <li>RSS feeds might be blocked or down</li>
-                    <li>Network connectivity issues</li>
-                    <li>All articles already processed</li>
-                    <li>Filtering too strict</li>
-                </ul>
-                <p><strong>Next Steps:</strong> Check GitHub Actions logs for detailed error messages</p>
-            </div>
-            """
-        else:
+        for i, article in enumerate(articles, 1):
             html_content += f"""
-            <div class="debug">
-                <h3>✅ Success! Found {len(articles)} articles</h3>
-                <p>The system is working correctly. Your regular monitor should find articles too.</p>
-            </div>
-            """
-        
-        # Add articles
-        for article in articles:
-            description = re.sub(r'<[^>]+>', '', article['description'])[:200]
-            keywords_str = ", ".join(article['keywords'][:5])
-            
-            html_content += f"""
-            <div class="article">
-                <div class="title">
-                    <a href="{article['link']}" target="_blank">{article['title']}</a>
-                </div>
-                <div class="meta">
-                    {article['source']} | {article['published'].strftime("%Y-%m-%d %H:%M")}
-                </div>
-                <div>{description}</div>
-                <div class="keywords">Keywords: {keywords_str}</div>
+            <div style="margin-bottom: 25px; padding: 15px; border-left: 4px solid #d32f2f; background: #f9f9f9;">
+                <h3 style="margin-top: 0; color: #d32f2f;">
+                    <a href="{article['link']}" style="color: #d32f2f; text-decoration: none;">{i}. {article['title']}</a>
+                </h3>
+                <p style="color: #666; margin: 5px 0;"><strong>Source:</strong> {article['source']} | <strong>Published:</strong> {article['published']}</p>
+                <p style="margin: 10px 0;">{article['summary'][:400]}{'...' if len(article['summary']) > 400 else ''}</p>
+                <a href="{article['link']}" style="color: #d32f2f; text-decoration: none;">→ Read Full Article</a>
             </div>
             """
         
@@ -293,75 +200,77 @@ class ChinaPolicyNewsMonitorDebug:
         </body>
         </html>
         """
-        
-        return html_content
+    else:
+        subject = f"China Policy News Daily Digest - 0 articles - {current_date}"
+        html_content = f"""
+        <html>
+        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+            <h2 style="color: #d32f2f;">🇨🇳 China Policy News Daily Digest</h2>
+            <p style="color: #666;"><em>No new policy-related articles found today.</em></p>
+            <p style="color: #666;">Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+        </body>
+        </html>
+        """
     
-    def send_email(self, articles: List[Dict]):
-        """Send debug email"""
-        try:
-            # Create message
-            msg = MIMEMultipart('alternative')
-            msg['Subject'] = f"DEBUG: China News Monitor - {len(articles)} articles found"
-            msg['From'] = self.email_user
-            msg['To'] = self.recipient_email
-            
-            # Generate HTML content
-            html_content = self.generate_debug_email(articles)
-            
-            # Create plain text version
-            text_content = f"DEBUG: China News Monitor Results\n\n"
-            text_content += f"Found {len(articles)} articles\n"
-            text_content += f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-            
-            if len(articles) == 0:
-                text_content += "No articles found. Check GitHub Actions logs for details.\n"
-            else:
-                text_content += "Articles found:\n\n"
-                for article in articles:
-                    text_content += f"- {article['title']}\n"
-                    text_content += f"  Source: {article['source']}\n"
-                    text_content += f"  Keywords: {', '.join(article['keywords'][:3])}\n\n"
-            
-            # Attach parts
-            part1 = MIMEText(text_content, 'plain')
-            part2 = MIMEText(html_content, 'html')
-            
-            msg.attach(part1)
-            msg.attach(part2)
-            
-            # Send email
-            server = smtplib.SMTP(self.smtp_server, self.smtp_port)
-            server.starttls()
-            server.login(self.email_user, self.email_password)
-            server.send_message(msg)
-            server.quit()
-            
-            print(f"✅ DEBUG email sent successfully to {self.recipient_email}")
-            
-        except Exception as e:
-            print(f"❌ Error sending debug email: {e}")
+    # Send email
+    try:
+        msg = MIMEMultipart('alternative')
+        msg['From'] = email_user
+        msg['To'] = recipient_email
+        msg['Subject'] = subject
+        
+        html_part = MIMEText(html_content, 'html')
+        msg.attach(html_part)
+        
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(email_user, email_password)
+        server.sendmail(email_user, recipient_email, msg.as_string())
+        server.quit()
+        
+        print(f"✅ Email sent successfully to {recipient_email}")
+        print(f"📧 Subject: {subject}")
+        
+    except Exception as e:
+        print(f"❌ Failed to send email: {e}")
+
+def main():
+    """Main function"""
+    print("🚀 Starting China Policy News Monitor...")
+    print(f"📅 Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
-    def run(self):
-        """Main execution function with debugging"""
-        print("🔍 Starting DEBUG version of China Policy News Monitor...")
-        print(f"📅 Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        print(f"📧 Email user: {self.email_user}")
-        print(f"📧 Recipient: {self.recipient_email}")
-        
-        # Collect news articles
-        articles = self.collect_news()
-        
-        print(f"\n📊 FINAL RESULTS:")
-        print(f"   Found {len(articles)} relevant articles")
-        
-        # Send debug email
-        if self.email_user and self.email_password and self.recipient_email:
-            self.send_email(articles)
-        else:
-            print("❌ Email credentials not configured")
-        
-        print("✅ DEBUG run completed")
+    # Load processed articles
+    processed_articles = load_processed_articles()
+    
+    # Fetch all news
+    all_articles = fetch_news()
+    print(f"\n📰 Total articles fetched: {len(all_articles)}")
+    
+    if not all_articles:
+        print("❌ No articles found from any source")
+        send_email([])  # Send empty email
+        return
+    
+    # Filter for China policy articles
+    china_articles = filter_china_policy_articles(all_articles)
+    print(f"📰 Found {len(china_articles)} policy-related articles")
+    
+    # Filter out already processed articles
+    new_articles = []
+    for article in china_articles:
+        if article['link'] not in processed_articles:
+            new_articles.append(article)
+            processed_articles.add(article['link'])
+    
+    print(f"🆕 New articles to send: {len(new_articles)}")
+    
+    # Send email
+    send_email(new_articles)
+    
+    # Save processed articles
+    save_processed_articles(processed_articles)
+    
+    print("✅ China Policy News Monitor completed")
 
 if __name__ == "__main__":
-    monitor = ChinaPolicyNewsMonitorDebug()
-    monitor.run()
+    main()
