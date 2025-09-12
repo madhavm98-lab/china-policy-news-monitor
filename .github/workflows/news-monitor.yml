@@ -2,7 +2,7 @@
 name: China Policy News Monitor
 
 permissions:
-  contents: write
+  contents: read
   actions: read
 
 on:
@@ -17,8 +17,6 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
         
     - name: Set up Python
       uses: actions/setup-python@v4
@@ -38,10 +36,4 @@ jobs:
       run: |
         python news_monitor.py
         
-    - name: Commit processed articles file
-      uses: stefanzweifel/git-auto-commit-action@v5
-      with:
-        commit_message: 'Update processed articles [skip ci]'
-        file_pattern: 'processed_articles.json'
-        commit_user_name: 'GitHub Action'
-        commit_user_email: 'action@github.com'
+    # Remove the commit step entirely - processed articles will be tracked in memory only
