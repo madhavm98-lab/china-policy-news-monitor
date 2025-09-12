@@ -1,12 +1,13 @@
 # .github/workflows/news-monitor.yml
 name: China Policy News Monitor
 
+permissions:
+  contents: write
+  actions: read
+
 on:
   schedule:
-    # Run daily at 8:00 AM UTC (adjust timezone as needed)
     - cron: '0 8 * * *'
-  
-  # Allow manual trigger
   workflow_dispatch:
 
 jobs:
@@ -16,7 +17,9 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
-      
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
@@ -36,9 +39,9 @@ jobs:
         python news_monitor.py
         
     - name: Commit processed articles file
-      run: |
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action"
-        git add processed_articles.json || true
-        git commit -m "Update processed articles [skip ci]" || true
-        git push || true
+      uses: stefanzweifel/git-auto-commit-action@v5
+      with:
+        commit_message: 'Update processed articles [skip ci]'
+        file_pattern: 'processed_articles.json'
+        commit_user_name: 'GitHub Action'
+        commit_user_email: 'action@github.com'
