@@ -1,0 +1,44 @@
+# .github/workflows/news-monitor.yml
+name: China Policy News Monitor
+
+on:
+  schedule:
+    # Run daily at 8:00 AM UTC (adjust timezone as needed)
+    - cron: '0 8 * * *'
+  
+  # Allow manual trigger
+  workflow_dispatch:
+
+jobs:
+  monitor-news:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install feedparser requests
+        
+    - name: Run news monitor
+      env:
+        EMAIL_USER: ${{ secrets.EMAIL_USER }}
+        EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+        RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
+      run: |
+        python news_monitor.py
+        
+    - name: Commit processed articles file
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add processed_articles.json || true
+        git commit -m "Update processed articles [skip ci]" || true
+        git push || true
