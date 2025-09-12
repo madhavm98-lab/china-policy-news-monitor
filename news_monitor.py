@@ -94,21 +94,8 @@ class ChinaPolicyNewsMonitorDebug:
         return hashlib.md5(f"{title}{link}".encode()).hexdigest()[:12]
     
     def is_policy_related(self, title: str, description: str) -> tuple[bool, List[str]]:
-        """Check if article is policy-related and return matching keywords"""
-        text = f"{title} {description}".lower()
-        matching_keywords = []
-        
-        for keyword in self.policy_keywords:
-            if keyword.lower() in text:
-                matching_keywords.append(keyword)
-        
-        is_relevant = len(matching_keywords) > 0
-        print(f"🔍 DEBUG: Article relevance check:")
-        print(f"   Title: {title[:50]}...")
-        print(f"   Keywords found: {matching_keywords}")
-        print(f"   Relevant: {is_relevant}")
-        
-        return is_relevant, matching_keywords
+    """Accept ALL articles for testing"""
+    return True, ["test"]  # Accept everything!
     
     def fetch_rss_feed(self, feed_config: Dict) -> List[Dict]:
         """Fetch and parse RSS feed with extensive debugging"""
