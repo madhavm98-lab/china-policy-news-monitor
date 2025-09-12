@@ -94,7 +94,7 @@ def is_china_policy_related(title, summary):
     
     # Primary China keywords - must have at least one
     china_keywords = [
-        'china', 'chinese', 'beijing', 'shanghai', 'guangzhou', 'shenzhen',
+        'china', 'beijing', 'shanghai', 'guangzhou', 'shenzhen',
         'xi jinping', 'ccp', 'communist party', 'prc', 'peoples republic',
         'mainland china', 'sino-'
     ]
