@@ -1,14 +1,10 @@
 # .github/workflows/news-monitor.yml
 name: China Policy News Monitor
 
-permissions:
-  contents: read
-  actions: read
-
 on:
   schedule:
-    - cron: '0 8 * * *'
-  workflow_dispatch:
+    - cron: '0 8 * * *'  # Run daily at 8:00 AM UTC
+  workflow_dispatch:  # Allow manual trigger
 
 jobs:
   monitor-news:
@@ -35,5 +31,3 @@ jobs:
         RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
       run: |
         python news_monitor.py
-        
-    # Remove the commit step entirely - processed articles will be tracked in memory only
