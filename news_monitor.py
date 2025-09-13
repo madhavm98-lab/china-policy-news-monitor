@@ -18,22 +18,24 @@ except ImportError:
     HAS_DATEUTIL = False
 
 def analyze_article_with_groq(title, summary, max_retries=3):
-    """Use Groq (free Llama) to analyze and score articles"""
+    """Use Groq (free Llama) to analyze and score China/Hong Kong articles"""
     api_key = os.environ.get('GROQ_API_KEY')
     if not api_key:
-        print("⚠️ GROQ_API_KEY not set, skipping AI analysis")
+        print("⚠️ GROQ_API_KEY not set, using rule-based scoring")
         return None
     
-    prompt = f"""Analyze this news article about China policy and provide a JSON response with:
-1. relevance_score (0-10): How relevant to China policy/geopolitics
+    prompt = f"""Analyze this news article about China/Hong Kong policy and provide a JSON response with:
+1. relevance_score (0-10): How relevant to China or Hong Kong policy/politics/economy
 2. importance_score (0-10): How important/impactful this news is
-3. category: One of ["Trade", "Technology", "Geopolitics", "Economy", "Military", "Diplomacy", "Other"]
-4. key_points: List of 3-5 main points (max 20 words each)
-5. summary_one_line: One sentence summary (max 30 words)
+3. category: One of ["China-Politics", "Hong Kong", "China-Economy", "China-Trade", "China-Technology", "China-Military", "China-Diplomacy", "Other"]
+4. key_points: List of 2-3 main points (max 25 words each)
+5. summary_one_line: One sentence summary (max 35 words)
+6. is_china_hk_related: true/false - Is this specifically about China or Hong Kong?
 
 Title: {title}
-Content: {summary[:1000]}
+Content: {summary[:800]}
 
+Focus ONLY on China and Hong Kong news. Be generous with scoring if it's China/HK related.
 Respond only with valid JSON:"""
 
     for attempt in range(max_retries):
@@ -45,10 +47,10 @@ Respond only with valid JSON:"""
                     "Content-Type": "application/json"
                 },
                 json={
-                    "model": "llama-3.1-8b-instant",  # Free tier
+                    "model": "llama-3.1-8b-instant",
                     "messages": [{"role": "user", "content": prompt}],
                     "temperature": 0.1,
-                    "max_tokens": 500
+                    "max_tokens": 400
                 },
                 timeout=10
             )
@@ -61,7 +63,7 @@ Respond only with valid JSON:"""
                     return json.loads(ai_response)
                 except json.JSONDecodeError:
                     # Extract JSON from response if wrapped in markdown
-                    json_match = re.search(r'```json\n(.*?)\n```', ai_response, re.DOTALL)
+                    json_match = re.search(r'```json\s*(.*?)\s*```', ai_response, re.DOTALL)
                     if json_match:
                         return json.loads(json_match.group(1))
                     else:
@@ -77,158 +79,97 @@ Respond only with valid JSON:"""
     
     return None
 
-def analyze_article_with_huggingface(title, summary):
-    """Use Hugging Face Inference API (free tier)"""
-    api_key = os.environ.get('HUGGINGFACE_API_KEY')
-    if not api_key:
-        return None
-    
-    try:
-        # Use a classification model
-        response = requests.post(
-            "https://api-inference.huggingface.co/models/facebook/bart-large-mnli",
-            headers={"Authorization": f"Bearer {api_key}"},
-            json={
-                "inputs": f"{title}. {summary[:500]}",
-                "parameters": {
-                    "candidate_labels": [
-                        "highly important international politics",
-                        "trade and economics",
-                        "technology and innovation", 
-                        "military and security",
-                        "diplomatic relations",
-                        "routine news"
-                    ]
-                }
-            },
-            timeout=10
-        )
-        
-        if response.status_code == 200:
-            result = response.json()
-            # Convert to our scoring system
-            top_label = result['labels'][0]
-            score = result['scores'][0]
-            
-            importance_map = {
-                "highly important international politics": 9,
-                "military and security": 8,
-                "trade and economics": 7,
-                "technology and innovation": 7,
-                "diplomatic relations": 6,
-                "routine news": 4
-            }
-            
-            return {
-                "relevance_score": min(10, int(score * 10) + 3),
-                "importance_score": importance_map.get(top_label, 5),
-                "category": top_label.replace("highly important ", "").title(),
-                "confidence": score
-            }
-            
-    except Exception as e:
-        print(f"HuggingFace API failed: {e}")
-    
-    return None
-
-def analyze_article_with_ollama(title, summary):
-    """Use local Ollama if available (completely free)"""
-    try:
-        response = requests.post(
-            "http://localhost:11434/api/generate",
-            json={
-                "model": "llama3.2:1b",  # Lightweight model
-                "prompt": f"""Rate this China-related news article from 1-10 for:
-1. Political importance
-2. Economic impact  
-3. Global relevance
-
-Title: {title}
-Summary: {summary[:800]}
-
-Respond with only: importance=X, economic=Y, global=Z (numbers only)""",
-                "stream": False,
-                "options": {"temperature": 0.1}
-            },
-            timeout=15
-        )
-        
-        if response.status_code == 200:
-            text = response.json()['response']
-            
-            # Parse scores
-            scores = {}
-            for match in re.finditer(r'(\w+)=(\d+)', text):
-                scores[match.group(1)] = int(match.group(2))
-            
-            if scores:
-                avg_score = sum(scores.values()) / len(scores)
-                return {
-                    "relevance_score": min(10, max(1, avg_score)),
-                    "importance_score": scores.get('importance', 5),
-                    "source": "ollama_local"
-                }
-                
-    except requests.exceptions.ConnectionError:
-        # Ollama not running locally
-        pass
-    except Exception as e:
-        print(f"Ollama failed: {e}")
-    
-    return None
-
-def get_ai_analysis(title, summary):
-    """Try multiple AI services in order of preference"""
-    
-    # 1. Try Groq first (best free option)
-    analysis = analyze_article_with_groq(title, summary)
-    if analysis:
-        analysis['ai_source'] = 'groq'
-        return analysis
-    
-    # 2. Try Ollama (local, completely free)
-    analysis = analyze_article_with_ollama(title, summary)
-    if analysis:
-        analysis['ai_source'] = 'ollama'
-        return analysis
-    
-    # 3. Try HuggingFace (good free tier)
-    analysis = analyze_article_with_huggingface(title, summary)
-    if analysis:
-        analysis['ai_source'] = 'huggingface'
-        return analysis
-    
-    # 4. Fallback to rule-based scoring
-    return get_rule_based_score(title, summary)
-
 def get_rule_based_score(title, summary):
-    """Fallback rule-based scoring when AI is unavailable"""
+    """Enhanced rule-based scoring for China/Hong Kong focus"""
     text = f"{title} {summary}".lower()
     
-    # High importance keywords
-    high_keywords = ['war', 'conflict', 'sanctions', 'trade war', 'military', 'nuclear', 'crisis']
-    medium_keywords = ['policy', 'agreement', 'meeting', 'summit', 'negotiate', 'deal']
+    # Primary China/Hong Kong keywords - more inclusive
+    china_hk_keywords = [
+        # China terms
+        'china', 'chinese', 'beijing', 'shanghai', 'guangzhou', 'shenzhen', 'xi jinping', 
+        'ccp', 'communist party', 'prc', 'peoples republic', 'mainland china', 'sino-',
+        
+        # Hong Kong terms  
+        'hong kong', 'hongkong', 'hk', 'carrie lam', 'john lee', 'legislative council',
+        'legco', 'central government', 'one country two systems',
+        
+        # Economic centers
+        'macau', 'macao', 'pearl river delta', 'greater bay area',
+        
+        # Taiwan (often relates to China policy)
+        'taiwan', 'taipei', 'strait', 'cross-strait'
+    ]
     
-    high_score = sum(2 for keyword in high_keywords if keyword in text)
-    medium_score = sum(1 for keyword in medium_keywords if keyword in text)
+    # Policy/Economic/Political keywords - be more inclusive
+    relevant_keywords = [
+        # Politics & Governance
+        'policy', 'government', 'political', 'election', 'democracy', 'protest', 'law',
+        'regulation', 'legal', 'court', 'parliament', 'congress', 'ministry', 'official',
+        'reform', 'crackdown', 'arrest', 'detention', 'security', 'police',
+        
+        # Economy & Business
+        'economy', 'economic', 'trade', 'business', 'market', 'stock', 'investment',
+        'gdp', 'growth', 'inflation', 'currency', 'yuan', 'renminbi', 'export', 'import',
+        'manufacturing', 'factory', 'company', 'corporate', 'financial', 'bank',
+        
+        # Technology
+        'technology', 'tech', 'digital', 'internet', 'ai', 'artificial intelligence',
+        'chip', 'semiconductor', 'huawei', 'tencent', 'alibaba', 'baidu', 'bytedance',
+        
+        # International Relations
+        'diplomacy', 'diplomatic', 'foreign', 'international', 'summit', 'meeting',
+        'agreement', 'treaty', 'sanctions', 'tariff', 'trade war', 'us-china', 'biden',
+        'america', 'american', 'europe', 'european', 'japan', 'korea', 'asean',
+        
+        # Regional Issues
+        'south china sea', 'belt and road', 'bri', 'military', 'defense', 'weapon',
+        'nuclear', 'missile', 'navy', 'army'
+    ]
     
-    base_score = 5
-    importance = min(10, base_score + high_score + medium_score)
+    # Check if has China/HK keyword
+    has_china_hk = any(keyword in text for keyword in china_hk_keywords)
+    
+    if not has_china_hk:
+        return {
+            "relevance_score": 0,
+            "importance_score": 0,
+            "category": "Other",
+            "is_china_hk_related": False,
+            "ai_source": "rule_based"
+        }
+    
+    # Count relevant keywords
+    relevance_count = sum(1 for keyword in relevant_keywords if keyword in text)
+    
+    # Base scoring
+    base_score = 6  # Higher base for China/HK articles
+    relevance_bonus = min(4, relevance_count)  # Up to 4 extra points
+    
+    final_score = min(10, base_score + relevance_bonus)
     
     # Determine category
-    if any(kw in text for kw in ['trade', 'tariff', 'export', 'import']):
-        category = "Trade"
-    elif any(kw in text for kw in ['military', 'defense', 'weapon']):
-        category = "Military"
-    elif any(kw in text for kw in ['tech', 'ai', 'chip', 'semiconductor']):
-        category = "Technology"
+    if any(kw in text for kw in ['hong kong', 'hongkong', 'hk', 'carrie lam', 'john lee']):
+        category = "Hong Kong"
+    elif any(kw in text for kw in ['trade', 'tariff', 'export', 'import', 'trade war']):
+        category = "China-Trade"
+    elif any(kw in text for kw in ['technology', 'tech', 'ai', 'chip', 'huawei']):
+        category = "China-Technology"
+    elif any(kw in text for kw in ['military', 'defense', 'weapon', 'navy']):
+        category = "China-Military"
+    elif any(kw in text for kw in ['economy', 'economic', 'gdp', 'growth']):
+        category = "China-Economy"
+    elif any(kw in text for kw in ['diplomacy', 'foreign', 'summit', 'meeting']):
+        category = "China-Diplomacy"
+    elif any(kw in text for kw in ['government', 'political', 'xi jinping', 'ccp']):
+        category = "China-Politics"
     else:
         category = "Other"
     
     return {
-        "relevance_score": importance,
-        "importance_score": importance,
+        "relevance_score": final_score,
+        "importance_score": final_score,
         "category": category,
+        "is_china_hk_related": True,
         "ai_source": "rule_based"
     }
 
@@ -248,73 +189,105 @@ def save_processed_articles(processed_articles):
     except Exception as e:
         print(f"Error saving processed articles: {e}")
 
-def fetch_full_article_content(url, max_chars=2000):
-    """Attempt to fetch fuller article content from URL"""
-    try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-        response = requests.get(url, headers=headers, timeout=10)
-        
-        # Simple text extraction (basic approach)
-        text = response.text
-        
-        # Remove HTML tags and get clean text
-        import re
-        text = re.sub(r'<[^>]+>', ' ', text)
-        text = re.sub(r'\s+', ' ', text)
-        
-        # Try to find article content (look for common patterns)
-        paragraphs = []
-        lines = text.split('.')
-        for line in lines:
-            line = line.strip()
-            if len(line) > 100 and not any(skip in line.lower() for skip in 
-                ['cookie', 'subscribe', 'newsletter', 'advertisement', 'javascript']):
-                paragraphs.append(line)
-        
-        content = '. '.join(paragraphs[:10])  # Take first 10 meaningful sentences
-        return content[:max_chars] if content else None
-        
-    except Exception as e:
-        print(f"Could not fetch full content from {url}: {e}")
-        return None
+def clean_article_summary(summary):
+    """Clean article summary from HTML/JS content"""
+    if not summary:
+        return "No summary available"
+    
+    # Remove HTML tags
+    summary = re.sub(r'<[^>]+>', ' ', summary)
+    
+    # Remove common JavaScript/tracking code patterns
+    js_patterns = [
+        r'function\s*\([^)]*\)\s*\{[^}]*\}',
+        r'var\s+\w+\s*=\s*[^;]+;',
+        r'window\.\w+\s*=\s*[^;]+;',
+        r'NREUM\.[^;]+;',
+        r'loader_config\s*=\s*\{[^}]+\}',
+        r'gadSlots\s*=\s*\{[^}]*\}',
+        r'@import\s+url\([^)]+\)',
+        r'!function\([^)]*\)\{[^}]*\}',
+        r'\w+\.\w+\s*=\s*\{[^}]*\}',
+        r'licenseKey[^;]+;',
+        r'applicationID[^;]+;',
+    ]
+    
+    for pattern in js_patterns:
+        summary = re.sub(pattern, '', summary, flags=re.IGNORECASE)
+    
+    # Remove excessive whitespace and special characters
+    summary = re.sub(r'\s+', ' ', summary)
+    summary = re.sub(r'[^\w\s\.,!?;:\-\'"()%$]', ' ', summary)
+    
+    # Remove common tracking/ad text
+    remove_phrases = [
+        'South China Morning Post',
+        'The Straits Times',
+        'window.',
+        'function(',
+        'var ',
+        'REUTERS',
+        'loader_config',
+        'gadSlots',
+        'NREUM',
+        'trustKey',
+        'accountID'
+    ]
+    
+    for phrase in remove_phrases:
+        summary = summary.replace(phrase, '')
+    
+    # Clean up and truncate
+    summary = summary.strip()
+    sentences = summary.split('. ')
+    
+    # Take first few meaningful sentences
+    clean_sentences = []
+    for sentence in sentences:
+        if len(sentence) > 30 and not any(skip in sentence.lower() for skip in 
+            ['cookie', 'subscribe', 'newsletter', 'javascript', 'advertisement']):
+            clean_sentences.append(sentence)
+        if len(clean_sentences) >= 3:  # Max 3 sentences
+            break
+    
+    result = '. '.join(clean_sentences)
+    if result:
+        return result[:800]  # Max 800 chars
+    else:
+        return summary[:300]  # Fallback to original (truncated)
 
-def fetch_news():
-    """Fetch news from multiple RSS feeds with enhanced diversity"""
+def fetch_china_hk_news():
+    """Fetch news specifically focused on China and Hong Kong"""
     feeds = [
-        # Major international news sources - diversified endpoints
-        ('Reuters World', 'https://feeds.reuters.com/reuters/worldNews'),
-        ('Reuters Business', 'https://feeds.reuters.com/reuters/businessNews'),
-        ('BBC World', 'https://feeds.bbci.co.uk/news/world/rss.xml'),
-        ('BBC Asia', 'https://feeds.bbci.co.uk/news/world/asia/rss.xml'),
-        ('CNN International', 'https://rss.cnn.com/rss/cnn_world.rss'),
-        ('AP News International', 'https://feeds.apnews.com/apnews/World'),
+        # China-focused sources
+        ('South China Morning Post - China', 'https://www.scmp.com/rss/2/feed'),
+        ('South China Morning Post - Hong Kong', 'https://www.scmp.com/rss/3/feed'),
+        ('China Daily', 'https://www.chinadaily.com.cn/rss/china_rss.xml'),
+        ('Xinhua China', 'http://www.xinhuanet.com/english/rss/china.xml'),
         
-        # Business & Economic sources
-        ('Financial Times World', 'https://www.ft.com/world?format=rss'),
-        ('Wall Street Journal World', 'https://feeds.a.dj.com/rss/RSSWorldNews.xml'),
-        ('Bloomberg Politics', 'https://feeds.bloomberg.com/politics/news.rss'),
-        ('Economic Times World', 'https://economictimes.indiatimes.com/news/international/world-news/rssfeeds/2563.cms'),
+        # Major international sources with China coverage
+        ('Reuters Asia', 'https://feeds.reuters.com/reuters/asiaNews'),
+        ('Reuters China', 'https://feeds.reuters.com/reuters/chinNews'),
+        ('BBC Asia-Pacific', 'https://feeds.bbci.co.uk/news/world/asia/rss.xml'),
+        ('CNN Asia', 'https://rss.cnn.com/rss/cnn_asia.rss'),
         
-        # Asia-Pacific focused
-        ('South China Morning Post', 'https://www.scmp.com/rss/91/feed'),
-        ('Japan Times', 'https://www.japantimes.co.jp/feed/topstories/'),
+        # Business sources with China focus
+        ('Financial Times China', 'https://www.ft.com/china?format=rss'),
+        ('Bloomberg Asia', 'https://feeds.bloomberg.com/politics/news.rss'),
+        ('Wall Street Journal Asia', 'https://feeds.a.dj.com/rss/RSSAsiaNews.xml'),
+        
+        # Regional Asia sources
+        ('Japan Times Asia', 'https://www.japantimes.co.jp/feed/asia-pacific/'),
         ('Straits Times Asia', 'https://www.straitstimes.com/news/asia/rss.xml'),
         ('Nikkei Asia', 'https://asia.nikkei.com/rss/feed/nar'),
         
-        # Alternative sources for better diversity
-        ('Foreign Affairs', 'https://www.foreignaffairs.com/rss.xml'),
-        ('Politico', 'https://www.politico.com/rss/politics08.xml'),
-        ('The Guardian World', 'https://www.theguardian.com/world/rss'),
-        ('NPR World', 'https://feeds.npr.org/1004/feed.json'),
+        # Specialized sources
+        ('Foreign Policy China', 'https://foreignpolicy.com/feed/'),
+        ('Asia Times', 'http://www.atimes.com/feed/'),
     ]
     
     all_articles = []
-    cutoff_date = datetime.now() - timedelta(hours=24)  # Exactly 24 hours
-    
-    # Limit articles per source to ensure diversity
-    max_articles_per_source = 3
+    cutoff_date = datetime.now() - timedelta(hours=24)
     
     for source_name, feed_url in feeds:
         try:
@@ -329,16 +302,11 @@ def fetch_news():
             feed = feedparser.parse(response.content)
             
             recent_count = 0
-            articles_from_source = 0
             
             for entry in feed.entries:
-                if articles_from_source >= max_articles_per_source:
-                    break
-                    
-                # Parse publication date more robustly
+                # Parse publication date
                 pub_date = None
                 
-                # Try multiple date fields
                 for date_field in ['published_parsed', 'updated_parsed', 'created_parsed']:
                     if hasattr(entry, date_field) and getattr(entry, date_field):
                         try:
@@ -347,7 +315,6 @@ def fetch_news():
                         except:
                             continue
                 
-                # If no parsed date, try string dates
                 if not pub_date and HAS_DATEUTIL:
                     for date_field in ['published', 'updated', 'created']:
                         if hasattr(entry, date_field):
@@ -360,136 +327,94 @@ def fetch_news():
                 # Only include articles from last 24 hours
                 if pub_date and pub_date >= cutoff_date:
                     recent_count += 1
-                    articles_from_source += 1
                     
-                    # Get article summary/content
-                    summary = entry.get('summary', entry.get('description', ''))
-                    
-                    # Try to get fuller content for better preview
-                    full_content = fetch_full_article_content(entry.get('link', ''))
-                    if full_content and len(full_content) > len(summary):
-                        summary = full_content
+                    # Get and clean article summary
+                    raw_summary = entry.get('summary', entry.get('description', ''))
+                    clean_summary = clean_article_summary(raw_summary)
                     
                     article = {
                         'title': entry.get('title', ''),
                         'link': entry.get('link', ''),
-                        'summary': summary,
+                        'summary': clean_summary,
                         'published': pub_date.strftime('%Y-%m-%d %H:%M UTC'),
                         'source': source_name,
                         'hours_ago': int((datetime.now() - pub_date).total_seconds() / 3600)
                     }
                     all_articles.append(article)
             
-            print(f"Found {recent_count} recent articles from {source_name} (took {articles_from_source})")
+            print(f"Found {recent_count} recent articles from {source_name}")
             
         except Exception as e:
             print(f"Error fetching {source_name}: {e}")
     
-    # Sort by publication date (newest first) and ensure source diversity
-    all_articles.sort(key=lambda x: x['published'], reverse=True)
-    
-    # Ensure source diversity by limiting consecutive articles from same source
-    diversified_articles = []
-    source_counts = {}
-    
-    for article in all_articles:
-        source = article['source']
-        if source_counts.get(source, 0) < 2 or len(diversified_articles) < 5:
-            diversified_articles.append(article)
-            source_counts[source] = source_counts.get(source, 0) + 1
-    
-    return diversified_articles
+    return all_articles
 
-def is_china_policy_related(title, summary):
-    """Enhanced function to check if article is China policy-related"""
+def is_china_hk_related(title, summary):
+    """More inclusive function to check if article is China/Hong Kong related"""
     text = f"{title} {summary}".lower()
     
-    # Primary China keywords - must have at least one
-    china_keywords = [
-        'china', 'chinese', 'beijing', 'shanghai', 'guangzhou', 'shenzhen',
-        'xi jinping', 'ccp', 'communist party', 'prc', 'peoples republic',
-        'mainland china', 'sino-'
+    # Be very inclusive for China/Hong Kong keywords
+    keywords = [
+        # Core China/HK terms
+        'china', 'chinese', 'beijing', 'shanghai', 'hong kong', 'hongkong', 'hk',
+        'xi jinping', 'ccp', 'communist party', 'prc', 'mainland china',
+        
+        # Taiwan (China-related)
+        'taiwan', 'taipei', 'strait', 'cross-strait',
+        
+        # Economic regions
+        'macau', 'macao', 'shenzhen', 'guangzhou', 'pearl river delta',
+        
+        # Chinese companies/brands
+        'huawei', 'tencent', 'alibaba', 'baidu', 'bytedance', 'tiktok', 'wechat',
+        'byd', 'xiaomi', 'lenovo', 'didi',
+        
+        # China-US relations
+        'sino-', 'us-china', 'china-us', 'biden china', 'trump china',
+        
+        # Regional terms that often involve China
+        'south china sea', 'east china sea', 'belt and road', 'bri', 'asean china'
     ]
     
-    # Policy/Economic keywords - must have at least one if China keyword present
-    policy_keywords = [
-        # Trade & Economics
-        'trade', 'tariff', 'import', 'export', 'economy', 'economic', 'gdp',
-        'investment', 'market', 'stock', 'yuan', 'renminbi', 'currency',
-        'inflation', 'growth', 'manufacturing', 'supply chain',
-        
-        # Technology & Innovation
-        'technology', 'tech', 'semiconductor', 'chip', 'ai', 'artificial intelligence',
-        'huawei', 'tencent', 'alibaba', 'baidu', 'bytedance', 'tiktok',
-        'electric vehicle', 'ev', 'battery', 'solar', 'renewable',
-        
-        # Geopolitics & International Relations
-        'policy', 'diplomacy', 'diplomatic', 'foreign policy', 'sanctions',
-        'biden', 'trump', 'us-china', 'america', 'european union', 'nato',
-        'g7', 'g20', 'wto', 'world bank', 'imf',
-        
-        # Regional Issues
-        'taiwan', 'hong kong', 'macau', 'tibet', 'xinjiang', 'uighur', 'uyghur',
-        'south china sea', 'east china sea', 'belt and road', 'bri',
-        
-        # Governance & Society
-        'government', 'regulation', 'law', 'legal', 'court', 'human rights',
-        'democracy', 'protest', 'covid', 'pandemic', 'lockdown', 'zero covid',
-        'environment', 'climate', 'carbon', 'emission', 'pollution'
-    ]
-    
-    # Check if has China keyword
-    has_china = any(keyword in text for keyword in china_keywords)
-    
-    # Check if has policy keyword
-    has_policy = any(keyword in text for keyword in policy_keywords)
-    
-    # Also check for US-China or other country-China relations
-    country_china_patterns = [
-        r'\bus[\s\-]china\b', r'\bchina[\s\-]us\b',
-        r'\beurope[\s\-]china\b', r'\bchina[\s\-]europe\b',
-        r'\bindia[\s\-]china\b', r'\bchina[\s\-]india\b',
-        r'\bjapan[\s\-]china\b', r'\bchina[\s\-]japan\b'
-    ]
-    
-    has_relation = any(re.search(pattern, text) for pattern in country_china_patterns)
-    
-    return has_china and (has_policy or has_relation)
+    return any(keyword in text for keyword in keywords)
 
 def filter_and_analyze_articles(articles):
-    """Filter articles and add AI analysis"""
-    filtered_articles = []
+    """Filter and analyze China/Hong Kong articles with AI"""
+    print(f"\n🔍 Filtering {len(articles)} articles for China/Hong Kong relevance...")
     
-    print("\n🤖 AI-analyzing articles for China policy relevance and importance...")
+    china_hk_articles = []
     
     for article in articles:
-        if is_china_policy_related(article['title'], article['summary']):
-            print(f"🔍 Analyzing: {article['title'][:60]}...")
+        if is_china_hk_related(article['title'], article['summary']):
+            print(f"✓ China/HK related: {article['title'][:60]}...")
             
             # Get AI analysis
-            ai_analysis = get_ai_analysis(article['title'], article['summary'])
+            ai_analysis = analyze_article_with_groq(article['title'], article['summary'])
             
             if ai_analysis:
                 article.update(ai_analysis)
-                print(f"   ✓ Score: {ai_analysis.get('importance_score', 0)}/10 | "
-                      f"Category: {ai_analysis.get('category', 'Unknown')} | "
-                      f"AI: {ai_analysis.get('ai_source', 'unknown')}")
+                # Only include if AI confirms it's China/HK related
+                if ai_analysis.get('is_china_hk_related', True):
+                    china_hk_articles.append(article)
+                    print(f"   🤖 AI Score: {ai_analysis.get('importance_score', 0)}/10 | "
+                          f"Category: {ai_analysis.get('category', 'Unknown')}")
+                else:
+                    print(f"   ❌ AI filtered out as not China/HK related")
             else:
-                article.update(get_rule_based_score(article['title'], article['summary']))
-                print(f"   ✓ Score: {article.get('importance_score', 0)}/10 (rule-based)")
-            
-            filtered_articles.append(article)
+                # Use rule-based analysis
+                rule_analysis = get_rule_based_score(article['title'], article['summary'])
+                if rule_analysis.get('is_china_hk_related', False):
+                    article.update(rule_analysis)
+                    china_hk_articles.append(article)
+                    print(f"   📏 Rule Score: {rule_analysis.get('importance_score', 0)}/10")
     
-    # Sort by AI-determined importance
-    filtered_articles.sort(key=lambda x: (
-        x.get('importance_score', 0) * 0.6 +  # 60% importance
-        x.get('relevance_score', 0) * 0.4      # 40% relevance
-    ), reverse=True)
+    # Sort by importance score
+    china_hk_articles.sort(key=lambda x: x.get('importance_score', 0), reverse=True)
     
-    return filtered_articles
+    return china_hk_articles
 
 def send_email(articles):
-    """Send email with AI-sorted articles"""
+    """Send email with China/Hong Kong articles"""
     email_user = os.environ.get('EMAIL_USER')
     email_password = os.environ.get('EMAIL_PASSWORD')
     recipient_email = os.environ.get('RECIPIENT_EMAIL')
@@ -498,38 +423,12 @@ def send_email(articles):
         print("❌ Email credentials not configured")
         return
     
-    # Create email content
     current_date = datetime.now().strftime('%Y-%m-%d')
     
     if articles:
-        # Count AI sources used
-        ai_sources = {}
-        for article in articles:
-            source = article.get('ai_source', 'unknown')
-            ai_sources[source] = ai_sources.get(source, 0) + 1
+        subject = f"🇨🇳🇭🇰 China & Hong Kong Policy News - {len(articles)} articles - {current_date}"
         
-        ai_summary = " + ".join([f"{count} {source}" for source, count in ai_sources.items()])
-        
-        subject = f"🤖 AI-Sorted China Policy News - {len(articles)} articles - {current_date}"
-        
-        # HTML email body with AI enhancements
-        html_content = f"""
-        <html>
-        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 800px; margin: 0 auto;">
-            <h2 style="color: #d32f2f; text-align: center; border-bottom: 2px solid #d32f2f; padding-bottom: 10px;">
-                🇨🇳🤖 AI-Sorted China Policy News
-            </h2>
-            <div style="text-align: center; color: #666; margin-bottom: 20px;">
-                <p><strong>📅 Date:</strong> {current_date} | <strong>📊 Articles:</strong> {len(articles)}</p>
-                <p style="font-size: 14px; color: #888;">
-                    🤖 AI-Analyzed & Sorted • ⏰ Last 24 hours • 🌐 Multiple sources<br>
-                    <strong>AI Processing:</strong> {ai_summary}
-                </p>
-            </div>
-            <hr style="border: 1px solid #ddd; margin: 20px 0;">
-        """
-        
-        # Group by category for better organization
+        # Group articles by category
         categories = {}
         for article in articles:
             cat = article.get('category', 'Other')
@@ -537,34 +436,62 @@ def send_email(articles):
                 categories[cat] = []
             categories[cat].append(article)
         
-        # Sort categories by importance
+        html_content = f"""
+        <html>
+        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 900px; margin: 0 auto;">
+            <h2 style="color: #d32f2f; text-align: center; border-bottom: 2px solid #d32f2f; padding-bottom: 10px;">
+                🇨🇳🇭🇰 China & Hong Kong Policy News
+            </h2>
+            <div style="text-align: center; color: #666; margin-bottom: 20px;">
+                <p><strong>📅 Date:</strong> {current_date} | <strong>📊 Articles:</strong> {len(articles)}</p>
+                <p style="font-size: 14px; color: #888;">
+                    🎯 China & Hong Kong Focus • ⏰ Last 24 hours • 🤖 AI-Enhanced
+                </p>
+            </div>
+            <hr style="border: 1px solid #ddd; margin: 20px 0;">
+        """
+        
+        # Sort categories by highest importance article in each
         for category, cat_articles in sorted(categories.items(), 
                                            key=lambda x: max(a.get('importance_score', 0) for a in x[1]), 
                                            reverse=True):
             
+            category_icon = {
+                'Hong Kong': '🇭🇰',
+                'China-Politics': '🏛️',
+                'China-Economy': '💰',
+                'China-Trade': '🚢',
+                'China-Technology': '💻',
+                'China-Military': '⚔️',
+                'China-Diplomacy': '🤝'
+            }.get(category, '📰')
+            
             html_content += f"""
             <h3 style="color: #d32f2f; border-bottom: 1px solid #ddd; padding-bottom: 5px; margin-top: 25px;">
-                📂 {category} ({len(cat_articles)} articles)
+                {category_icon} {category} ({len(cat_articles)} articles)
             </h3>
             """
             
-            for i, article in enumerate(cat_articles, 1):
-                # Show more content and AI scores
-                summary_text = article['summary'][:800] + ('...' if len(article['summary']) > 800 else '')
-                
-                # Time and scoring info
+            for article in cat_articles:
                 hours_ago = article.get('hours_ago', 0)
                 time_indicator = f"🕐 {hours_ago}h ago" if hours_ago < 24 else f"📅 {article['published']}"
                 
                 importance = article.get('importance_score', 0)
-                relevance = article.get('relevance_score', 0)
                 ai_source = article.get('ai_source', 'unknown')
                 
-                # Score color coding
-                score_color = "#ff4444" if importance >= 8 else "#ff8800" if importance >= 6 else "#666"
+                # Color coding based on importance
+                if importance >= 8:
+                    score_color = "#d32f2f"  # Red - high importance
+                    border_color = "#d32f2f"
+                elif importance >= 6:
+                    score_color = "#ff8800"  # Orange - medium importance
+                    border_color = "#ff8800"
+                else:
+                    score_color = "#666"     # Gray - lower importance
+                    border_color = "#ccc"
                 
                 html_content += f"""
-                <div style="margin-bottom: 30px; padding: 20px; border-left: 4px solid {score_color}; background: #f9f9f9; border-radius: 5px;">
+                <div style="margin-bottom: 25px; padding: 20px; border-left: 4px solid {border_color}; background: #f9f9f9; border-radius: 5px;">
                     <h4 style="margin-top: 0; color: #d32f2f; line-height: 1.3;">
                         <a href="{article['link']}" style="color: #d32f2f; text-decoration: none;">
                             {article['title']}
@@ -572,14 +499,14 @@ def send_email(articles):
                     </h4>
                     <div style="color: #888; margin: 8px 0; font-size: 14px;">
                         <strong>📰 {article['source']}</strong> | {time_indicator} | 
-                        <strong>🎯 AI Score: {importance}/10</strong> | 
+                        <strong style="color: {score_color};">🎯 Score: {importance}/10</strong> | 
                         <span style="font-size: 12px;">({ai_source})</span>
                     </div>
                     <div style="margin: 15px 0; line-height: 1.6; color: #333;">
-                        {summary_text}
+                        {article['summary']}
                     </div>
                     <a href="{article['link']}" 
-                       style="color: #fff; background: {score_color}; padding: 8px 16px; text-decoration: none; border-radius: 4px; display: inline-block; font-weight: bold;">
+                       style="color: #fff; background: {score_color}; padding: 10px 18px; text-decoration: none; border-radius: 5px; display: inline-block; font-weight: bold; margin-top: 10px;">
                         → Read Full Article
                     </a>
                 </div>
@@ -588,21 +515,21 @@ def send_email(articles):
         html_content += f"""
             <div style="text-align: center; margin-top: 30px; padding: 20px; background: #f0f0f0; border-radius: 5px;">
                 <p style="color: #666; font-size: 12px; margin: 0;">
-                    🤖 AI-Enhanced China Policy Monitor • 🔄 Updated every 24 hours<br>
-                    🌐 Sources: Reuters, BBC, CNN, AP, FT, SCMP, WSJ, Bloomberg, and more<br>
-                    <strong>AI Analysis:</strong> {ai_summary}
+                    🤖 AI-Enhanced China & Hong Kong News Monitor<br>
+                    🔄 Updated daily at 8:00 AM UTC • 🎯 Focused on China & Hong Kong only<br>
+                    📊 Sources: SCMP, China Daily, Reuters, BBC, Bloomberg, and more
                 </p>
             </div>
         </body>
         </html>
         """
     else:
-        subject = f"China Policy News Daily Digest - 0 articles - {current_date}"
+        subject = f"China & Hong Kong Policy News - No articles found - {current_date}"
         html_content = f"""
         <html>
         <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-            <h2 style="color: #d32f2f;">🇨🇳 China Policy News Daily Digest</h2>
-            <p style="color: #666;"><em>No new policy-related articles found today.</em></p>
+            <h2 style="color: #d32f2f;">🇨🇳🇭🇰 China & Hong Kong Policy News</h2>
+            <p style="color: #666;"><em>No new China or Hong Kong policy articles found today.</em></p>
             <p style="color: #666;">Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
         </body>
         </html>
@@ -632,36 +559,36 @@ def send_email(articles):
 
 def main():
     """Main function"""
-    print("🚀 Starting AI-Enhanced China Policy News Monitor...")
+    print("🚀 Starting China & Hong Kong Focused News Monitor...")
     print(f"📅 Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
     # Load processed articles
     processed_articles = load_processed_articles()
     
-    # Fetch all news
-    all_articles = fetch_news()
+    # Fetch China/Hong Kong focused news
+    all_articles = fetch_china_hk_news()
     print(f"\n📰 Total articles fetched: {len(all_articles)}")
     
     if not all_articles:
         print("❌ No articles found from any source")
-        send_email([])  # Send empty email
+        send_email([])
         return
     
     # Filter and analyze with AI
-    china_articles = filter_and_analyze_articles(all_articles)
-    print(f"\n📊 Found {len(china_articles)} AI-analyzed policy articles from {len(set(a['source'] for a in china_articles))} sources")
+    china_hk_articles = filter_and_analyze_articles(all_articles)
+    print(f"\n📊 Found {len(china_hk_articles)} China/Hong Kong articles")
     
-    # Show top articles by AI score
-    print("\n🏆 Top articles by AI importance score:")
-    for i, article in enumerate(china_articles[:5], 1):
-        score = article.get('importance_score', 0)
-        category = article.get('category', 'Other')
-        ai_source = article.get('ai_source', 'rule')
-        print(f"   {i}. [{score}/10] {category} - {article['title'][:60]}... ({ai_source})")
+    # Show top articles by score
+    if china_hk_articles:
+        print("\n🏆 Top China/Hong Kong articles by importance:")
+        for i, article in enumerate(china_hk_articles[:5], 1):
+            score = article.get('importance_score', 0)
+            category = article.get('category', 'Other')
+            print(f"   {i}. [{score}/10] {category} - {article['title'][:60]}...")
     
     # Filter out already processed articles
     new_articles = []
-    for article in china_articles:
+    for article in china_hk_articles:
         if article['link'] not in processed_articles:
             new_articles.append(article)
             processed_articles.add(article['link'])
@@ -674,7 +601,7 @@ def main():
     # Save processed articles
     save_processed_articles(processed_articles)
     
-    print("✅ AI-Enhanced China Policy News Monitor completed")
+    print("✅ China & Hong Kong News Monitor completed")
 
 if __name__ == "__main__":
     main()
