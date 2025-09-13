@@ -1,5 +1,5 @@
 # .github/workflows/news-monitor.yml
-name: China Policy News Monitor
+name: AI-Enhanced China Policy News Monitor
 
 on:
   schedule:
@@ -22,12 +22,20 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install feedparser requests
+        pip install feedparser requests python-dateutil
         
-    - name: Run news monitor
+    - name: Run AI-enhanced news monitor
       env:
+        # Email settings
         EMAIL_USER: ${{ secrets.EMAIL_USER }}
         EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
         RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
+        
+        # AI API Keys (add these to your repository secrets)
+        GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        HUGGINGFACE_API_KEY: ${{ secrets.HUGGINGFACE_API_KEY }}
+        
+        # Optional: If you want to run Ollama locally (advanced users)
+        # OLLAMA_HOST: ${{ secrets.OLLAMA_HOST }}
       run: |
         python news_monitor.py
