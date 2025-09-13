@@ -94,7 +94,7 @@ def is_china_policy_related(title, summary):
     
     # Primary China keywords - must have at least one
     china_keywords = [
-        'china', 'beijing', 'shanghai', 'guangzhou', 'shenzhen',
+        'china', 'chinese', 'beijing', 'shanghai', 'guangzhou', 'shenzhen',
         'xi jinping', 'ccp', 'communist party', 'prc', 'peoples republic',
         'mainland china', 'sino-'
     ]
@@ -103,7 +103,7 @@ def is_china_policy_related(title, summary):
     policy_keywords = [
         # Trade & Economics
         'trade', 'tariff', 'import', 'export', 'economy', 'economic', 'gdp',
-        'investment', 'currency',
+        'investment', 'market', 'stock', 'yuan', 'renminbi', 'currency',
         'inflation', 'growth', 'manufacturing', 'supply chain',
         
         # Technology & Innovation
