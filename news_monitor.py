@@ -272,7 +272,6 @@ def fetch_china_hk_news():
         ('CNN Asia', 'https://rss.cnn.com/rss/cnn_asia.rss'),
         
         # Business sources with China focus
-        ('Financial Times China', 'https://www.ft.com/china?format=rss'),
         ('Bloomberg Asia', 'https://feeds.bloomberg.com/politics/news.rss'),
         ('Wall Street Journal Asia', 'https://feeds.a.dj.com/rss/RSSAsiaNews.xml'),
         
